@@ -11,7 +11,11 @@
 // 3. Draw a mouth for your smiley face (4-6 more pixels), just below the eyes
 //
 
-void main()
+void userFunction(void)
 {
-    SetPixel(80, 60, Yellow);
+	UseAntiAliasing(true);
+    DrawPixel(80, 60, Yellow);
+    
+    
+    DrawCircle(50, 50, 30, Green, true);
 }

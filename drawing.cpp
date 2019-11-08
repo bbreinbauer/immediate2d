@@ -43,18 +43,15 @@
 
 #include "drawing.h"
 
-#include <mutex>
-#include <deque>
-#include <chrono>
 #include <string>
-#include <atomic>
-#include <memory>
 #include <random>
-#include <thread>
-#include <numeric>
-#include <algorithm>
+#include <deque>
+
+#include <unistd.h>
 
 
+// Function the user should implement, will be called periodically
+void userFunction(void);
 
 
 
@@ -106,57 +103,42 @@
 namespace Gdiplus { using std::min; using std::max; }
 #include <GdiPlus.h>
 
-// This instructs Visual Studio to add these to the list of libraries we link against
-#pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "winmm.lib")
-
 using namespace std;
-using namespace std::chrono;
 
 static_assert(Width > 0, "Width must be greater than 0.");
 static_assert(Height > 0, "Height must be greater than 0.");
 static_assert(PixelScale > 0, "PixelScale must be greater than 0.");
 
-static atomic<char> key{ 0 };
-static atomic<bool> dirty{ true };
-static atomic<bool> quitting{ false };
-static atomic<bool> musicRunning{ true };
-static atomic<bool> doubleBuffered{ false };
-static atomic<bool> mouseDown[3]{ false, false, false };
-static atomic<int> mouseX{ -1 }, mouseY{ -1 };
+static char key{ 0 };
+static bool dirty{ true };
+static bool quitting{ false };
+static bool musicRunning{ true };
+static bool doubleBuffered{ false };
+static bool mouseDown[3]{ false, false, false };
+static int mouseX{ -1 }, mouseY{ -1 };
 
-static mutex bitmapLock;
-static unique_ptr<Gdiplus::Bitmap> bitmap;
-static unique_ptr<Gdiplus::Graphics> graphics;
+static Gdiplus::Bitmap *bitmap;
+static Gdiplus::Graphics *graphics;
 
-static mutex musicLock;
-static unique_ptr<thread> musicThread;
-
-struct MusicNote { uint8_t noteId; milliseconds duration; };
-static deque<MusicNote> musicQueue;
-
-static mutex inputLock;
 static deque<char> inputBuffer;
 
-void main();
-
-void Present() { dirty = true; }
-void CloseWindow() { quitting = true; }
-char LastKey() { return key.exchange(0); }
-void UseDoubleBuffering(bool enabled) { doubleBuffered = enabled; Present(); }
-void Wait(int milliseconds) { this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
-
-int MouseX() { return mouseX; }
-int MouseY() { return mouseY; }
-bool LeftMousePressed() { return mouseDown[0]; }
-bool RightMousePressed() { return mouseDown[1]; }
-bool MiddleMousePressed() { return mouseDown[2]; }
-
+//void Present() { dirty = true; }
+//void CloseWindow() { quitting = true; }
+//char LastKey() { return key.exchange(0); }
+//void UseDoubleBuffering(bool enabled) { doubleBuffered = enabled; Present(); }
+//void Wait(int milliseconds) { this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
+//
+//int MouseX() { return mouseX; }
+//int MouseY() { return mouseY; }
+//bool LeftMousePressed() { return mouseDown[0]; }
+//bool RightMousePressed() { return mouseDown[1]; }
+//bool MiddleMousePressed() { return mouseDown[2]; }
+//
 static void SetDirty() { if (!doubleBuffered) dirty = true; }
 
 char LastBufferedKey()
 {
-    lock_guard<mutex> lock(inputLock);
+//    lock_guard<mutex> lock(inputLock);
     if (inputBuffer.empty()) return 0;
 
     char k = inputBuffer.front();
@@ -166,13 +148,13 @@ char LastBufferedKey()
 
 void ClearInputBuffer()
 {
-    lock_guard<mutex> lock(inputLock);
+//    lock_guard<mutex> lock(inputLock);
     inputBuffer.clear();
 }
 
 static void AddBufferedKey(char c)
 {
-    lock_guard<mutex> lock(inputLock);
+//    lock_guard<mutex> lock(inputLock);
 
     inputBuffer.push_back(c);
     while (inputBuffer.size() > 100) inputBuffer.pop_front();
@@ -182,77 +164,77 @@ static void AddBufferedKey(char c)
 //
 // For random coordinates/colors in a tight loop, this outperforms std::mt19937 by a mile
 //
-uint64_t xoroshiro128plus(void) {
-    static uint64_t s[2] = { 1, random_device()() };
-    auto rotl = [](const uint64_t x, int k) { return (x << k) | (x >> (64 - k)); };
-
-    const uint64_t s0 = s[0];
-    uint64_t s1 = s[1];
-    const uint64_t result = s0 + s1;
-
-    s1 ^= s0;
-    s[0] = rotl(s0, 55) ^ s1 ^ (s1 << 14);
-    s[1] = rotl(s1, 36);
-
-    return result;
-}
-
-int RandomInt(int low, int high)
-{
-    return (xoroshiro128plus() % (high - low)) + low;
-}
-
-double RandomDouble()
-{
-    union U { uint64_t i; double d; };
-    return U{ UINT64_C(0x3FF) << 52 | xoroshiro128plus() >> 12 }.d - 1.0;
-}
+//uint64_t xoroshiro128plus(void) {
+//    static uint64_t s[2] = { 1, random_device()() };
+//    auto rotl = [](const uint64_t x, int k) { return (x << k) | (x >> (64 - k)); };
+//
+//    const uint64_t s0 = s[0];
+//    uint64_t s1 = s[1];
+//    const uint64_t result = s0 + s1;
+//
+//    s1 ^= s0;
+//    s[0] = rotl(s0, 55) ^ s1 ^ (s1 << 14);
+//    s[1] = rotl(s1, 36);
+//
+//    return result;
+//}
+//
+//int RandomInt(int low, int high)
+//{
+//    return (xoroshiro128plus() % (high - low)) + low;
+//}
+//
+//double RandomDouble()
+//{
+//    union U { uint64_t i; double d; };
+//    return U{ UINT64_C(0x3FF) << 52 | xoroshiro128plus() >> 12 }.d - 1.0;
+//}
 
 // GDI+ makes us work a little harder before we can save as a particular image type
-static CLSID GetEncoderClsid(const wstring &format)
-{
-    using namespace Gdiplus;
-
-    UINT count, bytes;
-    GetImageEncodersSize(&count, &bytes);
-
-    // Something weird is going on here.  The returned size isn't just count*sizeof(ImageCodecInfo).
-    auto codecs = make_unique<uint8_t[]>(bytes);
-    if (!codecs) return CLSID{};
-
-    GetImageEncoders(count, bytes, reinterpret_cast<ImageCodecInfo*>(codecs.get()));
-
-    for (UINT i = 0; i < count; ++i)
-    {
-        const auto &codec = reinterpret_cast<ImageCodecInfo*>(codecs.get())[i];
-        if (wcscmp(codec.MimeType, format.c_str()) != 0) continue;
-        return codec.Clsid;
-    }
-
-    return CLSID{};
-}
-
-void SaveImage(int suffix)
-{
-    lock_guard<mutex> lock(bitmapLock);
-    if (!bitmap) return;
-
-    static wstring desktop;
-    if (desktop.empty())
-    {
-        wchar_t *desktopRaw = nullptr;
-        if (SHGetKnownFolderPath(FOLDERID_Desktop, 0, NULL, &desktopRaw) != S_OK) return;
-        desktop = desktopRaw;
-        CoTaskMemFree(desktopRaw);
-    }
-
-    wstring path = desktop + wstring(L"\\image");
-    if (suffix > 0) path += L"_" + to_wstring(suffix);
-    path += L".png";
-
-    static const CLSID png = GetEncoderClsid(L"image/png");
-    bitmap->Save(path.c_str(), &png, NULL);
-}
+//static CLSID GetEncoderClsid(const wstring &format)
+//{
+//    using namespace Gdiplus;
+//
+//    UINT count, bytes;
+//    GetImageEncodersSize(&count, &bytes);
+//
+//    // Something weird is going on here.  The returned size isn't just count*sizeof(ImageCodecInfo).
+//    auto codecs = make_unique<uint8_t[]>(bytes);
+//    if (!codecs) return CLSID{};
+//
+//    GetImageEncoders(count, bytes, reinterpret_cast<ImageCodecInfo*>(codecs.get()));
+//
+//    for (UINT i = 0; i < count; ++i)
+//    {
+//        const auto &codec = reinterpret_cast<ImageCodecInfo*>(codecs.get())[i];
+//        if (wcscmp(codec.MimeType, format.c_str()) != 0) continue;
+//        return codec.Clsid;
+//    }
+//
+//    return CLSID{};
+//}
+//
+//void SaveImage(int suffix)
+//{
+//    lock_guard<mutex> lock(bitmapLock);
+//    if (!bitmap) return;
+//
+//    static wstring desktop;
+//    if (desktop.empty())
+//    {
+//        wchar_t *desktopRaw = nullptr;
+//        if (SHGetKnownFolderPath(FOLDERID_Desktop, 0, NULL, &desktopRaw) != S_OK) return;
+//        desktop = desktopRaw;
+//        CoTaskMemFree(desktopRaw);
+//    }
+//
+//    wstring path = desktop + wstring(L"\\image");
+//    if (suffix > 0) path += L"_" + to_wstring(suffix);
+//    path += L".png";
+//
+//    static const CLSID png = GetEncoderClsid(L"image/png");
+//    bitmap->Save(path.c_str(), &png, NULL);
+//}
 
 
 
@@ -338,54 +320,54 @@ Color MakeColor(int r, int g, int b)
     return (0xFF << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | ((b & 0xFF) << 0);
 }
 
-Color MakeColorHSV(int hue, int sat, int val)
-{
-    float h = fmod(hue / 360.0f, 1.0f);
-    float s = min(1.0f, max(0.0f, sat / 255.0f));
-    float v = min(1.0f, max(0.0f, val / 255.0f));
-
-    if (s == 0)
-    {
-        int gray = int(v * 255);
-        return MakeColor(gray, gray, gray);
-    }
-
-    float var_h = h * 6;
-    int var_i = int(var_h);
-    float var_1 = v * (1 - s);
-    float var_2 = v * (1 - s * (var_h - var_i));
-    float var_3 = v * (1 - s * (1 - (var_h - var_i)));
-
-    float var_r;
-    float var_g;
-    float var_b;
-
-    switch (var_i)
-    {
-    case 0:  var_r = v;     var_g = var_3; var_b = var_1; break;
-    case 1:  var_r = var_2; var_g = v;     var_b = var_1; break;
-    case 2:  var_r = var_1; var_g = v;     var_b = var_3; break;
-    case 3:  var_r = var_1; var_g = var_2; var_b = v;     break;
-    case 4:  var_r = var_3; var_g = var_1; var_b = v;     break;
-    default: var_r = v;     var_g = var_1; var_b = var_2; break;
-    }
-
-    return MakeColor(int(var_r * 255), int(var_g * 255), int(var_b * 255));
-}
+//Color MakeColorHSV(int hue, int sat, int val)
+//{
+//    float h = fmod(hue / 360.0f, 1.0f);
+//    float s = min(1.0f, max(0.0f, sat / 255.0f));
+//    float v = min(1.0f, max(0.0f, val / 255.0f));
+//
+//    if (s == 0)
+//    {
+//        int gray = int(v * 255);
+//        return MakeColor(gray, gray, gray);
+//    }
+//
+//    float var_h = h * 6;
+//    int var_i = int(var_h);
+//    float var_1 = v * (1 - s);
+//    float var_2 = v * (1 - s * (var_h - var_i));
+//    float var_3 = v * (1 - s * (1 - (var_h - var_i)));
+//
+//    float var_r;
+//    float var_g;
+//    float var_b;
+//
+//    switch (var_i)
+//    {
+//    case 0:  var_r = v;     var_g = var_3; var_b = var_1; break;
+//    case 1:  var_r = var_2; var_g = v;     var_b = var_1; break;
+//    case 2:  var_r = var_1; var_g = v;     var_b = var_3; break;
+//    case 3:  var_r = var_1; var_g = var_2; var_b = v;     break;
+//    case 4:  var_r = var_3; var_g = var_1; var_b = v;     break;
+//    default: var_r = v;     var_g = var_1; var_b = var_2; break;
+//    }
+//
+//    return MakeColor(int(var_r * 255), int(var_g * 255), int(var_b * 255));
+//}
 
 void UseAntiAliasing(bool enabled)
 {
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     graphics->SetSmoothingMode(enabled ? Gdiplus::SmoothingModeAntiAlias : Gdiplus::SmoothingModeNone);
 }
 
-void SetPixel(int x, int y, Color c)
+void DrawPixel(int x, int y, Color c)
 {
     if (x < 0 || x >= Width || y < 0 || y >= Height) return;
 
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     Gdiplus::BitmapData d;
@@ -398,34 +380,34 @@ void SetPixel(int x, int y, Color c)
     SetDirty();
 }
 
-void Present(const std::vector<Color> &screen)
-{
-    if (screen.size() != Width * Height) return;
-
-    lock_guard<mutex> lock(bitmapLock);
-    if (!bitmap) return;
-
-    Gdiplus::BitmapData d;
-    Gdiplus::Rect r(0, 0, Width, Height);
-    bitmap->LockBits(&r, Gdiplus::ImageLockModeWrite, bitmap->GetPixelFormat(), &d);
-
-    auto dstLine = reinterpret_cast<uint32_t*>(d.Scan0);
-    for (int y = 0; y < Height; ++y)
-    {
-        auto srcLine = &screen[Width * y];
-        memcpy(dstLine, srcLine, Width * sizeof(uint32_t));
-        dstLine += d.Stride / 4;
-    }
-
-    bitmap->UnlockBits(&d);
-    dirty = true;
-}
+//void Present(const std::vector<Color> &screen)
+//{
+//    if (screen.size() != Width * Height) return;
+//
+//    lock_guard<mutex> lock(bitmapLock);
+//    if (!bitmap) return;
+//
+//    Gdiplus::BitmapData d;
+//    Gdiplus::Rect r(0, 0, Width, Height);
+//    bitmap->LockBits(&r, Gdiplus::ImageLockModeWrite, bitmap->GetPixelFormat(), &d);
+//
+//    auto dstLine = reinterpret_cast<uint32_t*>(d.Scan0);
+//    for (int y = 0; y < Height; ++y)
+//    {
+//        auto srcLine = &screen[Width * y];
+//        memcpy(dstLine, srcLine, Width * sizeof(uint32_t));
+//        dstLine += d.Stride / 4;
+//    }
+//
+//    bitmap->UnlockBits(&d);
+//    dirty = true;
+//}
 
 Color GetPixel(int x, int y)
 {
     if (x < 0 || x >= Width || y < 0 || y >= Height) return Black;
 
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return Black;
 
     Gdiplus::Color c;
@@ -435,7 +417,7 @@ Color GetPixel(int x, int y)
 
 void DrawLine(int x1, int y1, int x2, int y2, int thickness, Color c)
 {
-    lock_guard<mutex> lock(bitmapLock);
+////    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     Gdiplus::Color color(c);
@@ -450,7 +432,7 @@ void DrawLine(int x1, int y1, int x2, int y2, int thickness, Color c)
 
 void DrawCircle(int x, int y, int radius, Color c, bool filled)
 {
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     Gdiplus::Rect r(x - radius, y - radius, radius * 2, radius * 2);
@@ -472,7 +454,7 @@ void DrawCircle(int x, int y, int radius, Color c, bool filled)
 
 void DrawArc(int x, int y, float radius, float thickness, Color c, float startRadians, float endRadians)
 {
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     Gdiplus::Color color(c);
@@ -488,7 +470,7 @@ void DrawArc(int x, int y, float radius, float thickness, Color c, float startRa
 
 void DrawRectangle(int x, int y, int width, int height, Color c, bool filled)
 {
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     // GDI+'s DrawRectangle and FillRectangle behave a little differently: One
@@ -515,89 +497,89 @@ void DrawRectangle(int x, int y, int width, int height, Color c, bool filled)
 
 // For a line-by-line breakdown of this single-function text rendering library, see the Text example.  (This version has
 // been compacted a bit and made a little more generic so we can draw directly into the density field in the smoke example.)
-void DrawString(int x, int y, const string &s, const Color c, bool centered, function<void(int x, int y, Color c)> customDraw)
-{
-    static constexpr uint32_t Font[128 - 32] = {
-        0x10000000, 0x10000017, 0x30000C03, 0x50AFABEA, 0x509AFEB2, 0x30004C99, 0x400A26AA, 0x10000003, 0x2000022E, 0x200001D1, 0x30001445, 0x300011C4, 0x10000018, 0x30001084, 0x10000010, 0x30000C98,
-        0x30003A2E, 0x300043F2, 0x30004AB9, 0x30006EB1, 0x30007C87, 0x300026B7, 0x300076BF, 0x30007C21, 0x30006EBB, 0x30007EB7, 0x1000000A, 0x1000001A, 0x30004544, 0x4005294A, 0x30001151, 0x30000AA1,
-        0x506ADE2E, 0x300078BE, 0x30002ABF, 0x3000462E, 0x30003A3F, 0x300046BF, 0x300004BF, 0x3000662E, 0x30007C9F, 0x1000001F, 0x30003E08, 0x30006C9F, 0x3000421F, 0x51F1105F, 0x51F4105F, 0x4007462E,
-        0x300008BF, 0x400F662E, 0x300068BF, 0x300026B2, 0x300007E1, 0x30007E1F, 0x30003E0F, 0x50F8320F, 0x30006C9B, 0x30000F83, 0x30004EB9, 0x2000023F, 0x30006083, 0x200003F1, 0x30000822, 0x30004210,
-        0x20000041, 0x300078BE, 0x30002ABF, 0x3000462E, 0x30003A3F, 0x300046BF, 0x300004BF, 0x3000662E, 0x30007C9F, 0x1000001F, 0x30003E08, 0x30006C9F, 0x3000421F, 0x51F1105F, 0x51F4105F, 0x4007462E,
-        0x300008BF, 0x400F662E, 0x300068BF, 0x300026B2, 0x300007E1, 0x30007E1F, 0x30003E0F, 0x50F8320F, 0x30006C9B, 0x30000F83, 0x30004EB9, 0x30004764, 0x1000001F, 0x30001371, 0x50441044, 0x00000000,
-    };
-
-    if (centered) x -= accumulate(s.begin(), s.end(), 0, [](int a, char b) { return a + (b < 32 ? 0 : (Font[b - 32] >> 28) + 1); }) / 2;
-    for (auto i : s)
-    {
-        if (i < 32 || i > 127) continue;
-        uint32_t glyph = Font[i - 32];
-        const int width = glyph >> 28;
-        for (int u = x; u < x + width; ++u) for (int v = y; v < y + 5; ++v, glyph = glyph >> 1) if ((glyph & 1) == 1) customDraw(u, v, c);
-        if (width > 0) x += width + 1;
-    }
-}
+//void DrawString(int x, int y, const string &s, const Color c, bool centered, function<void(int x, int y, Color c)> customDraw)
+//{
+//    static constexpr uint32_t Font[128 - 32] = {
+//        0x10000000, 0x10000017, 0x30000C03, 0x50AFABEA, 0x509AFEB2, 0x30004C99, 0x400A26AA, 0x10000003, 0x2000022E, 0x200001D1, 0x30001445, 0x300011C4, 0x10000018, 0x30001084, 0x10000010, 0x30000C98,
+//        0x30003A2E, 0x300043F2, 0x30004AB9, 0x30006EB1, 0x30007C87, 0x300026B7, 0x300076BF, 0x30007C21, 0x30006EBB, 0x30007EB7, 0x1000000A, 0x1000001A, 0x30004544, 0x4005294A, 0x30001151, 0x30000AA1,
+//        0x506ADE2E, 0x300078BE, 0x30002ABF, 0x3000462E, 0x30003A3F, 0x300046BF, 0x300004BF, 0x3000662E, 0x30007C9F, 0x1000001F, 0x30003E08, 0x30006C9F, 0x3000421F, 0x51F1105F, 0x51F4105F, 0x4007462E,
+//        0x300008BF, 0x400F662E, 0x300068BF, 0x300026B2, 0x300007E1, 0x30007E1F, 0x30003E0F, 0x50F8320F, 0x30006C9B, 0x30000F83, 0x30004EB9, 0x2000023F, 0x30006083, 0x200003F1, 0x30000822, 0x30004210,
+//        0x20000041, 0x300078BE, 0x30002ABF, 0x3000462E, 0x30003A3F, 0x300046BF, 0x300004BF, 0x3000662E, 0x30007C9F, 0x1000001F, 0x30003E08, 0x30006C9F, 0x3000421F, 0x51F1105F, 0x51F4105F, 0x4007462E,
+//        0x300008BF, 0x400F662E, 0x300068BF, 0x300026B2, 0x300007E1, 0x30007E1F, 0x30003E0F, 0x50F8320F, 0x30006C9B, 0x30000F83, 0x30004EB9, 0x30004764, 0x1000001F, 0x30001371, 0x50441044, 0x00000000,
+//    };
+//
+//    if (centered) x -= accumulate(s.begin(), s.end(), 0, [](int a, char b) { return a + (b < 32 ? 0 : (Font[b - 32] >> 28) + 1); }) / 2;
+//    for (auto i : s)
+//    {
+//        if (i < 32 || i > 127) continue;
+//        uint32_t glyph = Font[i - 32];
+//        const int width = glyph >> 28;
+//        for (int u = x; u < x + width; ++u) for (int v = y; v < y + 5; ++v, glyph = glyph >> 1) if ((glyph & 1) == 1) customDraw(u, v, c);
+//        if (width > 0) x += width + 1;
+//    }
+//}
 
 // Windows has their own SetPixel in global scope, so we need the static_cast to disambiguate from ours
-void DrawString(int x, int y, const string &s, const Color c, bool centered) { DrawString(x, y, s, c, centered, static_cast<void(*)(int, int, Color)>(SetPixel)); }
+//void DrawString(int x, int y, const string &s, const Color c, bool centered) { DrawString(x, y, s, c, centered, SetPixel); }
 
 void Clear(Color c)
 {
-    lock_guard<mutex> lock(bitmapLock);
+//    lock_guard<mutex> lock(bitmapLock);
     if (!bitmap) return;
 
     graphics->Clear(Gdiplus::Color(c));
     SetDirty();
 }
 
-void PlayMidiNote(int noteId, int ms)
-{
-    if (noteId < 0 || ms < 0) return;
-
-    lock_guard<mutex> lock(musicLock);
-    if (!musicRunning) return;
-
-    musicQueue.push_back(MusicNote{ uint8_t(uint8_t(noteId) & 0x7F), milliseconds(ms) });
-
-    if (!musicThread) musicThread = make_unique<thread>([]()
-    {
-        HMIDIOUT synth = nullptr;
-        if (midiOutOpen(&synth, MIDI_MAPPER, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) return;
-
-        // We always use the "Lead 1 (Square)" instrument because it sounds like the PC speaker
-        constexpr uint8_t Instrument = 80;
-        midiOutShortMsg(synth, 0xC0 | (Instrument << 8));
-
-        while (musicRunning)
-        {
-            MusicNote n;
-
-            {
-                unique_lock<mutex> lock(musicLock);
-                if (musicQueue.empty())
-                {
-                    lock.unlock();
-                    this_thread::sleep_for(1ms);
-                    continue;
-                }
-
-                n = musicQueue.front();
-                musicQueue.pop_front();
-            }
-
-            if (n.noteId != 0) midiOutShortMsg(synth, 0x00700090 | (n.noteId << 8));
-            this_thread::sleep_for(n.duration);
-            if (n.noteId != 0) midiOutShortMsg(synth, 0x00000090 | (n.noteId << 8));
-        }
-
-        midiOutClose(synth);
-    });
-}
-
-void ClearMidiQueue()
-{
-    lock_guard<mutex> lock(musicLock);
-    musicQueue.clear();
-}
+//void PlayMidiNote(int noteId, int ms)
+//{
+//    if (noteId < 0 || ms < 0) return;
+//
+//    lock_guard<mutex> lock(musicLock);
+//    if (!musicRunning) return;
+//
+//    musicQueue.push_back(MusicNote{ uint8_t(uint8_t(noteId) & 0x7F), milliseconds(ms) });
+//
+//    if (!musicThread) musicThread = make_unique<thread>([]()
+//    {
+//        HMIDIOUT synth = nullptr;
+//        if (midiOutOpen(&synth, MIDI_MAPPER, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) return;
+//
+//        // We always use the "Lead 1 (Square)" instrument because it sounds like the PC speaker
+//        constexpr uint8_t Instrument = 80;
+//        midiOutShortMsg(synth, 0xC0 | (Instrument << 8));
+//
+//        while (musicRunning)
+//        {
+//            MusicNote n;
+//
+//            {
+//                unique_lock<mutex> lock(musicLock);
+//                if (musicQueue.empty())
+//                {
+//                    lock.unlock();
+//                    this_thread::sleep_for(1ms);
+//                    continue;
+//                }
+//
+//                n = musicQueue.front();
+//                musicQueue.pop_front();
+//            }
+//
+//            if (n.noteId != 0) midiOutShortMsg(synth, 0x00700090 | (n.noteId << 8));
+//            this_thread::sleep_for(n.duration);
+//            if (n.noteId != 0) midiOutShortMsg(synth, 0x00000090 | (n.noteId << 8));
+//        }
+//
+//        midiOutClose(synth);
+//    });
+//}
+//
+//void ClearMidiQueue()
+//{
+//    lock_guard<mutex> lock(musicLock);
+//    musicQueue.clear();
+//}
 
 
 LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
@@ -633,11 +615,11 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
         const Gdiplus::RectF dest(0, 0, (float)Width, (float)Height);
 
         {
-            lock_guard<mutex> lock(bitmapLock);
+//            lock_guard<mutex> lock(bitmapLock);
             Gdiplus::Graphics hdcG(backbufferDC);
 
             hdcG.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
-            hdcG.DrawImage(bitmap.get(), dest, -0.5f, -0.5f, (float)Width, (float)Height, Gdiplus::UnitPixel);
+            hdcG.DrawImage(bitmap, dest, -0.5f, -0.5f, (float)Width, (float)Height, Gdiplus::UnitPixel);
         }
 
         StretchBlt(hdc, 0, 0, Width * PixelScale, Height * PixelScale, backbufferDC, 0, 0, Width, Height, SRCCOPY);
@@ -667,14 +649,14 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
         break;
 
     case WM_CHAR:
-        AddBufferedKey(key = (char)w);
+//        AddBufferedKey(key = (char)w);
         return 0;
 
     case WM_KEYDOWN:
     {
         char thisKey = MapVirtualKey((UINT)w, MAPVK_VK_TO_CHAR);
         if (w == VK_LEFT || w == VK_UP || w == VK_RIGHT || w == VK_DOWN) thisKey = char(w) - 0x14;
-        if (thisKey < 32) AddBufferedKey(key = thisKey);
+//        if (thisKey < 32) AddBufferedKey(key = thisKey);
         return 0;
     }
 
@@ -700,21 +682,22 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     Gdiplus::Status startupResult = GdiplusStartup(&gdiPlusToken, &gdiplusStartupInput, NULL);
 
-    bitmap = make_unique<Gdiplus::Bitmap>(Width, Height);
-    graphics = make_unique<Gdiplus::Graphics>(bitmap.get());
+    bitmap = new Gdiplus::Bitmap(Width, Height);
+    graphics = new Gdiplus::Graphics(bitmap);
     UseAntiAliasing(false);
     Clear();
 
     ShowWindow(wnd, cmdShow);
     UpdateWindow(wnd);
 
-    thread(main).detach();
+//    thread(main).detach();
 
-    auto lastDraw = high_resolution_clock::now();
+//    auto lastDraw = high_resolution_clock::now();
 
     MSG message;
     while (true)
     {
+    	userFunction();
         if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
         {
             if (message.message == WM_QUIT) break;
@@ -722,26 +705,28 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
             DispatchMessage(&message);
         }
 
-        if (quitting.exchange(false)) PostQuitMessage(0);
+        if (quitting) PostQuitMessage(0);
 
-        const auto now = high_resolution_clock::now();
-        if (now - lastDraw > 5ms)
-        {
-            if (dirty.exchange(false)) InvalidateRect(wnd, nullptr, FALSE);
-            lastDraw = now;
-        }
-        else this_thread::sleep_for(1ms);
+//        const auto now = high_resolution_clock::now();
+//        if (now - lastDraw > 5ms)
+//        {
+            if (dirty) {
+            	InvalidateRect(wnd, nullptr, FALSE);
+			}
+//        }
+//        else this_thread::sleep_for(1ms);
+		usleep(5000);
     }
 
     {
-        lock_guard<mutex> lock(bitmapLock);
-        graphics.reset();
-        bitmap.reset();
+//        lock_guard<mutex> lock(bitmapLock);
+//        graphics->reset();
+//        bitmap->reset();
         Gdiplus::GdiplusShutdown(gdiPlusToken);
 
-        lock_guard<mutex> lock2(musicLock);
-        musicRunning = false;
-        if (musicThread) musicThread->join();
+//        lock_guard<mutex> lock2(musicLock);
+//        musicRunning = false;
+//        if (musicThread) musicThread->join();
 
         // Without this, the main thread doesn't get killed fast enough to avoid
         // touching objects that have already been cleaned up after WinMain returns.

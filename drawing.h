@@ -106,7 +106,7 @@ static const Color White =        MakeColor(255, 255, 255);
 
 
 // Draws a single dot at (x, y) in the given color
-void SetPixel(int x, int y, Color c);
+void DrawPixel(int x, int y, Color c);
 
 // Draws a line from (x1, y1) to (x2, y2) with a given stroke thickness
 // (in units of pixels) in the given color
