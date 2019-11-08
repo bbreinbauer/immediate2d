@@ -182,7 +182,7 @@ void CloseWindow();
 // It's usually called "image.png" unless you provide a positive integer
 // suffix.  Then you'll get names like "image_4.png" or "image_26.png"
 //
-void SaveImage(int suffix = 0);
+//void SaveImage(int suffix = 0);
 
 
 // Generates a random integer in the interval [low, high)
