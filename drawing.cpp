@@ -124,19 +124,26 @@ static deque<char> inputBuffer;
 
 //void Present() { dirty = true; }
 void CloseWindow() { quitting = true; }
-//char LastKey() { return key.exchange(0); }
+char LastKey() { 
+	if (key != 0) {
+		char k = key;
+		key = 0;
+		return k;
+	}
+	return 0;	
+}
 //void UseDoubleBuffering(bool enabled) { doubleBuffered = enabled; Present(); }
 void Wait(int milliseconds) { 
 //this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 	Sleep(milliseconds);
  }
-//
-//int MouseX() { return mouseX; }
-//int MouseY() { return mouseY; }
-//bool LeftMousePressed() { return mouseDown[0]; }
-//bool RightMousePressed() { return mouseDown[1]; }
-//bool MiddleMousePressed() { return mouseDown[2]; }
-//
+
+int MouseX() { return mouseX; }
+int MouseY() { return mouseY; }
+bool LeftMousePressed() { return mouseDown[0]; }
+bool RightMousePressed() { return mouseDown[1]; }
+bool MiddleMousePressed() { return mouseDown[2]; }
+
 static void SetDirty() { if (!doubleBuffered) dirty = true; }
 
 char LastBufferedKey()
@@ -652,14 +659,14 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
         break;
 
     case WM_CHAR:
-//        AddBufferedKey(key = (char)w);
+        AddBufferedKey(key = (char)w);
         return 0;
 
     case WM_KEYDOWN:
     {
         char thisKey = MapVirtualKey((UINT)w, MAPVK_VK_TO_CHAR);
         if (w == VK_LEFT || w == VK_UP || w == VK_RIGHT || w == VK_DOWN) thisKey = char(w) - 0x14;
-//        if (thisKey < 32) AddBufferedKey(key = thisKey);
+        if (thisKey < 32) AddBufferedKey(key = thisKey);
         return 0;
     }
 
