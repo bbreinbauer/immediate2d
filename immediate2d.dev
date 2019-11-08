@@ -1,7 +1,7 @@
 [Project]
 FileName=immediate2d.dev
 Name=immediate2d
-Type=1
+Type=0
 Ver=2
 ObjFiles=
 Includes=
@@ -11,7 +11,7 @@ ResourceIncludes=
 MakeIncludes=
 Compiler=
 CppCompiler=
-Linker=
+Linker=-lgdiplus -lwinmm -lgdi32_@@_
 IsCpp=1
 Icon=
 ExeOutput=
@@ -28,7 +28,7 @@ Folders=
 IncludeVersionInfo=0
 SupportXPThemes=0
 CompilerSet=0
-CompilerSettings=00000000c0000000000000000
+CompilerSettings=00000000c0000000001000000
 UnitCount=3
 
 [VersionInfo]
