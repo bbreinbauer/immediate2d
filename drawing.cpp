@@ -123,10 +123,13 @@ static Gdiplus::Graphics *graphics;
 static deque<char> inputBuffer;
 
 //void Present() { dirty = true; }
-//void CloseWindow() { quitting = true; }
+void CloseWindow() { quitting = true; }
 //char LastKey() { return key.exchange(0); }
 //void UseDoubleBuffering(bool enabled) { doubleBuffered = enabled; Present(); }
-//void Wait(int milliseconds) { this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
+void Wait(int milliseconds) { 
+//this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+	Sleep(milliseconds);
+ }
 //
 //int MouseX() { return mouseX; }
 //int MouseY() { return mouseY; }
@@ -665,6 +668,10 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
     return DefWindowProc(wnd, msg, w, l);
 }
 
+static MSG message;
+static bool mainLoop = true;
+static HWND wnd;
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
 {
     WNDCLASSW wc{ CS_OWNDC, WndProc, 0, 0, instance, LoadIcon(nullptr, IDI_APPLICATION), LoadCursor(nullptr, IDC_ARROW), (HBRUSH)(COLOR_WINDOW + 1), nullptr, L"Immediate2D" };
@@ -675,7 +682,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
     RECT r{ 0, 0, Width * PixelScale, Height * PixelScale };
     AdjustWindowRect(&r, style, FALSE);
 
-    HWND wnd = CreateWindowW(L"Immediate2D", L"Immediate2D", style, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, instance, nullptr);
+    wnd = CreateWindowW(L"Immediate2D", L"Immediate2D", style, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, instance, nullptr);
     if (wnd == nullptr) return 1;
 
     ULONG_PTR gdiPlusToken;
@@ -694,28 +701,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
 
 //    auto lastDraw = high_resolution_clock::now();
 
-    MSG message;
-    while (true)
+    while (mainLoop)
     {
     	userFunction();
-        if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
-        {
-            if (message.message == WM_QUIT) break;
-            TranslateMessage(&message);
-            DispatchMessage(&message);
-        }
 
-        if (quitting) PostQuitMessage(0);
-
-//        const auto now = high_resolution_clock::now();
-//        if (now - lastDraw > 5ms)
-//        {
-            if (dirty) {
-            	InvalidateRect(wnd, nullptr, FALSE);
-			}
-//        }
-//        else this_thread::sleep_for(1ms);
-		usleep(5000);
     }
 
     {
@@ -734,4 +723,29 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int cmdShow)
     }
 
     return (UINT)message.wParam;
+}
+
+void UpdateScreen(void) {
+	
+    while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
+    {
+        if (message.message == WM_QUIT) mainLoop = false;
+        TranslateMessage(&message);
+        DispatchMessage(&message);
+    }
+
+    if (quitting)  {
+    	PostQuitMessage(0);
+    	mainLoop = false;
+	}
+		
+
+//        const auto now = high_resolution_clock::now();
+//        if (now - lastDraw > 5ms)
+//        {
+    if (dirty) {
+    	InvalidateRect(wnd, nullptr, FALSE);
+	}
+//        }
+//        else this_thread::sleep_for(1ms);	
 }

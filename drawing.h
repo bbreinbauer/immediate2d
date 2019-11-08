@@ -262,3 +262,5 @@ bool MiddleMousePressed();
 // currently hovering over our window
 int MouseX();
 int MouseY();
+
+void UpdateScreen(void);

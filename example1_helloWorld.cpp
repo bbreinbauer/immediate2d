@@ -1,5 +1,7 @@
 #include "drawing.h"
 
+#include <unistd.h>
+
 //
 // Example 1 - Hello World
 //
@@ -13,9 +15,23 @@
 
 void userFunction(void)
 {
-	UseAntiAliasing(true);
+	//UseAntiAliasing(true);
     DrawPixel(80, 60, Yellow);
     
     
-    DrawCircle(50, 50, 30, Green, true);
+    DrawCircle(50, 50, 20, Green, true);
+    DrawLine(10, 10, 25, 25, 1, Blue);
+    DrawRectangle(70, 10, 30, 40, Red, true);
+    
+    for(int i = 0; i < 10; i++) {
+    	Clear();
+    	DrawCircle(10 + 10*i, 80, 10, White, true);
+    	UpdateScreen();
+    	Wait(100);
+	}
+    
+    //CloseWindow();
+    UpdateScreen();
+    Wait(500);
+    
 }
